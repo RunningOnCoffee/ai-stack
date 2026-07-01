@@ -1,0 +1,28 @@
+# Secrets — niemals committen
+.env
+.env.*
+!.env.example
+
+# Modelle & Caches (viel zu groß fürs Repo)
+models/
+*.safetensors
+*.gguf
+*.bin
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs
+*.log
+logs/
+
+# Editor & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+EOF

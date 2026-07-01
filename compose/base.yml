@@ -1,0 +1,144 @@
+# ============================================================================
+#  base.yml — arch-agnostischer Service-Graph
+#  Niemals allein verwenden: immer mit einem Arch-Override mergen
+#  (COMPOSE_FILE in .env = compose/base.yml:compose/arm64.yml).
+#  Das `command` der GPU-Dienste liegt bewusst im Arch-Override, weil
+#  Quant-Backend/Flags architekturabhängig sind.
+# ============================================================================
+
+networks:
+  aistack:
+    driver: bridge
+
+volumes:
+  qdrant-data:
+
+services:
+
+  # ---- Core (always-on) ----------------------------------------------------
+  gateway:
+    image: ${LITELLM_IMAGE}
+    container_name: ai-gateway
+    restart: unless-stopped
+    ports:
+      - "${LITELLM_PORT}:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    volumes:
+      - ./gateway/litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      llm:
+        condition: service_healthy
+    networks: [aistack]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4000/health/liveliness || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: ${QDRANT_IMAGE}
+    container_name: ai-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT}:6333"
+      - "${QDRANT_GRPC_PORT}:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks: [aistack]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  llm:
+    image: ${VLLM_IMAGE}
+    container_name: ai-llm
+    restart: unless-stopped
+    # command -> siehe compose/arm64.yml bzw. compose/x86.yml
+    ports:
+      - "${LLM_PORT}:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - ${HF_HOME}:/root/.cache/huggingface
+    ipc: host                       # vLLM braucht großen /dev/shm
+    networks: [aistack]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20               # Ladezeit großer Modelle einkalkulieren
+      start_period: 300s
+
+  # ---- Voice (on-demand: `--profile voice`) --------------------------------
+  stt:
+    profiles: ["voice"]
+    image: ${STT_IMAGE:-ai-stack/qwen3-asr:local}   # siehe services/stt/README.md
+    container_name: ai-stt
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      MODEL_ID: ${STT_MODEL_ID}
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ${HF_HOME}:/root/.cache/huggingface
+    ipc: host
+    networks: [aistack]
+    deploy:
+      resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } }
+
+  tts:
+    profiles: ["voice"]
+    image: ${TTS_IMAGE:-ai-stack/qwen3-tts:local}   # siehe services/tts/README.md
+    container_name: ai-tts
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      MODEL_ID: ${TTS_MODEL_ID}
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ${HF_HOME}:/root/.cache/huggingface
+    ipc: host
+    networks: [aistack]
+    deploy:
+      resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } }
+
+  # ---- RAG (on-demand: `--profile rag`) ------------------------------------
+  embedding:
+    profiles: ["rag"]
+    image: ${VLLM_IMAGE}                            # vLLM serviert auch Embeddings
+    container_name: ai-embedding
+    # command -> Arch-Override (vllm serve ... --task embed)
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ${HF_HOME}:/root/.cache/huggingface
+    ipc: host
+    networks: [aistack]
+    deploy:
+      resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } }
+
+  ocr:
+    profiles: ["rag"]
+    image: ${OCR_IMAGE:-ai-stack/docling:local}     # siehe services/ocr/README.md
+    container_name: ai-ocr
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ${HF_HOME}:/root/.cache/huggingface
+    networks: [aistack]
+    deploy:
+      resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } }

@@ -1,0 +1,39 @@
+# ============================================================================
+#  LiteLLM — ein OpenAI-kompatibler Endpoint vor allen Backends.
+#  Clients sprechen nur :4000; Modelle dahinter sind austauschbar.
+# ============================================================================
+
+model_list:
+  # ---- Core: Qwen3.6-27B (always-on) --------------------------------------
+  - model_name: qwen3.6-27b            # so fragen Clients an
+    litellm_params:
+      model: openai/qwen3.6-27b        # == --served-model-name im vLLM
+      api_base: http://llm:8000/v1
+      api_key: dummy                   # vLLM ignoriert das, LiteLLM braucht einen Wert
+
+  # ---- RAG: Embedding (Profil `rag`) — bei Ausbau einkommentieren ---------
+  # - model_name: qwen3-embedding
+  #   litellm_params:
+  #     model: openai/qwen3-embedding
+  #     api_base: http://embedding:8000/v1
+  #     api_key: dummy
+
+  # ---- Voice (Profil `voice`) — bei Ausbau einkommentieren ----------------
+  #   STT/TTS sind OpenAI-Audio-kompatibel und können hier proxied werden,
+  #   oder Clients rufen sie direkt unter http://stt:8000 / http://tts:8000.
+  # - model_name: qwen3-asr
+  #   litellm_params:
+  #     model: openai/qwen3-asr
+  #     api_base: http://stt:8000/v1
+  #     api_key: dummy
+  # - model_name: qwen3-tts
+  #   litellm_params:
+  #     model: openai/qwen3-tts
+  #     api_base: http://tts:8000/v1
+  #     api_key: dummy
+
+litellm_settings:
+  drop_params: true          # unbekannte Params tolerieren statt Fehler
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

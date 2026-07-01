@@ -1,0 +1,40 @@
+# ============================================================================
+#  x86.yml — Override für x86_64 + Standard-NVIDIA-GPU (Phase 2)
+#  Mergen via COMPOSE_FILE=compose/base.yml:compose/x86.yml
+#
+#  Payoff des base+Override-Patterns: Service-Graph, Gateway, Qdrant und
+#  App-Code bleiben identisch — nur Images/Flags/Platform ändern sich.
+#  In .env dann VLLM_IMAGE auf ein Standard-amd64-Image setzen, z.B.
+#  vllm/vllm-openai:<version>.  Details: docs/x86-migration.md
+# ============================================================================
+
+services:
+
+  llm:
+    platform: linux/amd64
+    command:
+      - "--model=${LLM_MODEL_ID}"
+      - "--served-model-name=${LLM_SERVED_NAME}"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+      - "--gpu-memory-utilization=${LLM_GPU_MEM_UTIL}"
+      - "--max-model-len=${LLM_MAX_LEN}"
+      - "--kv-cache-dtype=${LLM_KV_DTYPE}"
+      - "--limit-mm-per-prompt"
+      - "image=0"
+      - "${LLM_EXTRA_ARGS}"
+
+  embedding:
+    platform: linux/amd64
+    command:
+      - "--model=${EMBED_MODEL_ID}"
+      - "--served-model-name=qwen3-embedding"
+      - "--task=embed"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+      - "--gpu-memory-utilization=0.20"
+      - "--trust-remote-code"
+
+  stt:   { platform: linux/amd64 }
+  tts:   { platform: linux/amd64 }
+  ocr:   { platform: linux/amd64 }

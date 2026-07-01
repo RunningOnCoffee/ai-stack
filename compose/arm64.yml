@@ -1,0 +1,47 @@
+# ============================================================================
+#  arm64.yml — Override für DGX Spark (GB10 / aarch64 / sm_121)
+#  Enthält die architekturabhängigen `command`s + Spark-Tuning.
+#  Mergen via COMPOSE_FILE=compose/base.yml:compose/arm64.yml
+# ============================================================================
+
+services:
+
+  llm:
+    platform: linux/arm64
+    # Qwen3.6-27B, OpenAI-kompatibler Server, sm_121-getunt.
+    # NVFP4 bevorzugen (Blackwell-nativ). Bei Startup-OOM: --enforce-eager ergänzen
+    # und LLM_GPU_MEM_UTIL senken (siehe docs/memory-budget.md).
+    command:
+      - "--model=${LLM_MODEL_ID}"
+      - "--served-model-name=${LLM_SERVED_NAME}"
+      - "--host=0.0.0.0"                     # NICHT localhost, sonst greift -p ins Leere
+      - "--port=8000"
+      - "--gpu-memory-utilization=${LLM_GPU_MEM_UTIL}"
+      - "--max-model-len=${LLM_MAX_LEN}"
+      - "--kv-cache-dtype=${LLM_KV_DTYPE}"
+      # Qwen3.6 ist multimodal — bei reinem Textbetrieb Bilder limitieren:
+      - "--limit-mm-per-prompt"
+      - "image=0"
+      - "${LLM_EXTRA_ARGS}"
+    environment:
+      # Falls das Image FP4 unterstützt, hier den Backend-Pfad forcieren (recipe-abhängig):
+      # VLLM_ATTENTION_BACKEND: FLASHINFER
+      VLLM_USE_V1: "1"
+
+  embedding:
+    platform: linux/arm64
+    command:
+      - "--model=${EMBED_MODEL_ID}"
+      - "--served-model-name=qwen3-embedding"
+      - "--task=embed"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+      - "--gpu-memory-utilization=0.20"
+      - "--trust-remote-code"
+
+  stt:
+    platform: linux/arm64
+  tts:
+    platform: linux/arm64
+  ocr:
+    platform: linux/arm64
