@@ -1,0 +1,42 @@
+{
+  "ryan": {
+    "speaker": "Ryan",
+    "language": "Auto",
+    "instruct": ""
+  },
+  "aiden": {
+    "speaker": "Aiden",
+    "language": "Auto",
+    "instruct": ""
+  },
+  "serena": {
+    "speaker": "Serena",
+    "language": "Auto",
+    "instruct": ""
+  },
+  "vivian": {
+    "speaker": "Vivian",
+    "language": "Auto",
+    "instruct": ""
+  },
+  "ryan-de": {
+    "speaker": "Ryan",
+    "language": "German",
+    "instruct": ""
+  },
+  "ryan-en": {
+    "speaker": "Ryan",
+    "language": "English",
+    "instruct": ""
+  },
+  "serena-de": {
+    "speaker": "Serena",
+    "language": "German",
+    "instruct": ""
+  },
+  "serena-en": {
+    "speaker": "Serena",
+    "language": "English",
+    "instruct": ""
+  }
+}

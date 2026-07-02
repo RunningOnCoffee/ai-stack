@@ -1,16 +1,37 @@
-# STT — Qwen3-ASR-0.6B (on-demand, Profil `voice`)  [GEPLANT]
+# STT — Qwen3-ASR-0.6B (on-demand, Profil `voice`)
 
-Exponiert OpenAI `/v1/audio/transcriptions`. Start: `make up-voice`.
+Exponiert OpenAI `/v1/audio/transcriptions` (Host: `:8003`, im Compose-Netz:
+`http://stt:8001` — Port 8001 ist der Upstream-Default des Images).
+Start: `make up-stt` (oder `make up-voice` für STT + TTS zusammen).
 
 ## Basis
-`AEON-7/qwen3-asr-server` (vLLM-nativ, sm_120/121, flash-attn 2) als Vorlage/Base.
-Entweder deren Image als `STT_IMAGE` in `.env` setzen, oder hier ein `Dockerfile`
-ablegen und `build:` in einem Override ergänzen.
+Fertiges ARM64/sm_121a-Image `ghcr.io/aeon-7/qwen3-asr-server` (Repo:
+`AEON-7/qwen3-asr-server`) auf Grundlage von AEONs Spark-vLLM-Build — vLLM
+serviert Qwen3-ASR nativ als OpenAI-Audio-Endpoint, die aarch64-Audio-Wheels
+sind im Image gelöst. Healthcheck ist im Image eingebaut (prüft `8001/v1/models`
+— deshalb den Container-Port nicht ändern).
 
-## aarch64-Hinweis
-Audio-Wheels (torchaudio, ctranslate2, flash-attn) sind auf aarch64 heikel — die
-AEON-7-Server lösen das bereits. Sonst Community-Wheels/Source-Build (siehe docs).
+Das `vllm serve`-Kommando liegt parametrisiert in `compose/arm64.yml`
+(Werte: `STT_*` in `.env`). 30 Sprachen inkl. DE/EN, RTF ~16× Echtzeit.
+
+## Setup
+Kein manueller Schritt nötig: Das Modell (~1.3 GB) lädt der Container beim
+ersten Start selbst in den geteilten HF-Cache (`HF_HOME`-Mount).
+
+```bash
+make up-stt
+docker compose logs -f stt         # bis "Application startup complete"
+
+# Test (WAV/MP3/OGG …, Feld "file" + "model"):
+curl -s http://localhost:8003/v1/audio/transcriptions \
+  -F file=@models/tts/test-de.wav -F model=qwen3-asr
+```
+
+## Qualitäts-Upgrade
+`STT_MODEL_ID=Qwen/Qwen3-ASR-1.7B` in `.env` setzen und `STT_GPU_MEM_UTIL`
+auf ≥ 0.10 erhöhen, dann `make up-stt` (lädt das neue Modell nach).
 
 ## Einbindung
-In `gateway/litellm-config.yaml` den `qwen3-asr`-Block einkommentieren, oder direkt
-`http://stt:8000` aufrufen.
+`qwen3-asr` ist in `gateway/litellm-config.yaml` registriert; solange der
+Dienst nicht läuft, schlagen am Gateway nur Anfragen an dieses Modell fehl.
+Über das Gateway: `POST :4000/v1/audio/transcriptions` mit `model=qwen3-asr`.

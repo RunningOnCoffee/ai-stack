@@ -11,6 +11,14 @@ model_list:
       api_base: http://llm:8000/v1
       api_key: dummy                   # vLLM ignoriert das, LiteLLM braucht einen Wert
 
+  # ---- Fast: Qwen3.6-35B-A3B MoE (Profil `fast`) — Start via `make up-fast`.
+  #      Solange der Dienst nicht läuft, schlagen nur Anfragen an DIESES Modell fehl.
+  - model_name: qwen3.6-35b-fast
+    litellm_params:
+      model: openai/qwen3.6-35b-fast
+      api_base: http://llm-fast:8000/v1
+      api_key: dummy
+
   # ---- RAG: Embedding (Profil `rag`) — bei Ausbau einkommentieren ---------
   # - model_name: qwen3-embedding
   #   litellm_params:
@@ -18,19 +26,23 @@ model_list:
   #     api_base: http://embedding:8000/v1
   #     api_key: dummy
 
-  # ---- Voice (Profil `voice`) — bei Ausbau einkommentieren ----------------
-  #   STT/TTS sind OpenAI-Audio-kompatibel und können hier proxied werden,
-  #   oder Clients rufen sie direkt unter http://stt:8000 / http://tts:8000.
-  # - model_name: qwen3-asr
-  #   litellm_params:
-  #     model: openai/qwen3-asr
-  #     api_base: http://stt:8000/v1
-  #     api_key: dummy
-  # - model_name: qwen3-tts
-  #   litellm_params:
-  #     model: openai/qwen3-tts
-  #     api_base: http://tts:8000/v1
-  #     api_key: dummy
+  # ---- Voice (Profil `voice`) ----------------------------------------------
+  #   STT/TTS sind OpenAI-Audio-kompatibel; Clients können sie auch direkt
+  #   unter http://stt:8001 (Host: :8003) / http://tts:8000 (Host: :8002) aufrufen.
+  # TTS: Start via `make up-tts`; solange aus, schlagen nur TTS-Anfragen fehl.
+  - model_name: qwen3-tts
+    litellm_params:
+      model: openai/qwen3-tts
+      api_base: http://tts:8000/v1
+      api_key: dummy
+  # STT: Start via `make up-stt`; Container-Port 8001 (Upstream-Default).
+  # Provider hosted_vllm (nicht openai): der openai-Provider erzwingt bei
+  # Transkription response_format=verbose_json, das vLLM nicht unterstützt.
+  - model_name: qwen3-asr
+    litellm_params:
+      model: hosted_vllm/qwen3-asr
+      api_base: http://stt:8001/v1
+      api_key: dummy
 
 litellm_settings:
   drop_params: true          # unbekannte Params tolerieren statt Fehler

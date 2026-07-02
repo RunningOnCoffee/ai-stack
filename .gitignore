@@ -25,4 +25,6 @@ logs/
 *.swp
 .DS_Store
 Thumbs.db
-EOF
+
+# Upstream-Klone (via services/*/README.md neu beziehbar)
+services/tts/upstream/

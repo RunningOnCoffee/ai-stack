@@ -11,37 +11,103 @@ services:
     # Qwen3.6-27B, OpenAI-kompatibler Server, sm_121-getunt.
     # NVFP4 bevorzugen (Blackwell-nativ). Bei Startup-OOM: --enforce-eager ergänzen
     # und LLM_GPU_MEM_UTIL senken (siehe docs/memory-budget.md).
+    # nvcr.io/nvidia/vllm-Images haben nur ein NVIDIA-Wrapper-Entrypoint ->
+    # volles "vllm serve ..."-Kommando nötig (vllm/vllm-openai hätte den Entrypoint eingebaut).
     command:
-      - "--model=${LLM_MODEL_ID}"
+      - "vllm"
+      - "serve"
+      - "${LLM_MODEL_ID}"
       - "--served-model-name=${LLM_SERVED_NAME}"
+      - "--tokenizer=${LLM_TOKENIZER}"
       - "--host=0.0.0.0"                     # NICHT localhost, sonst greift -p ins Leere
       - "--port=8000"
       - "--gpu-memory-utilization=${LLM_GPU_MEM_UTIL}"
       - "--max-model-len=${LLM_MAX_LEN}"
+      - "--max-num-seqs=${LLM_MAX_SEQS}"
       - "--kv-cache-dtype=${LLM_KV_DTYPE}"
-      # Qwen3.6 ist multimodal — bei reinem Textbetrieb Bilder limitieren:
-      - "--limit-mm-per-prompt"
-      - "image=0"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser=qwen3_coder"
+      - "--reasoning-parser=qwen3"
+      - "${LLM_EXTRA_ARGS}"
+    # Falls das Image FP4 braucht, Backend-Pfad forcieren (recipe-abhängig):
+    # environment:
+    #   VLLM_ATTENTION_BACKEND: FLASHINFER
+
+  llm-fast:
+    platform: linux/arm64
+    # Qwen3.6-35B-A3B (MoE, 35B total / 3B aktiv) — schnelle Option, Profil `fast`.
+    # Flags aus dem erprobten ai-stack-2-Setup (dort solo: 0.45 Util / 131072 Kontext).
+    command:
+      - "vllm"
+      - "serve"
+      - "${LLM_FAST_MODEL_ID}"
+      - "--served-model-name=${LLM_FAST_SERVED_NAME}"
+      - "--tokenizer=${LLM_FAST_TOKENIZER}"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+      - "--gpu-memory-utilization=${LLM_FAST_GPU_MEM_UTIL}"
+      - "--max-model-len=${LLM_FAST_MAX_LEN}"
+      - "--max-num-seqs=${LLM_FAST_MAX_SEQS}"
+      - "--max-num-batched-tokens=8192"
+      - "--kv-cache-dtype=${LLM_FAST_KV_DTYPE}"
+      - "--enable-expert-parallel"
+      - "--enable-chunked-prefill"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser=qwen3_coder"
+      - "--reasoning-parser=qwen3"
       - "${LLM_EXTRA_ARGS}"
     environment:
-      # Falls das Image FP4 unterstützt, hier den Backend-Pfad forcieren (recipe-abhängig):
-      # VLLM_ATTENTION_BACKEND: FLASHINFER
-      VLLM_USE_V1: "1"
+      # FlashInfer = schneller Pfad für NVFP4-MoE auf Blackwell; bei Problemen FLASH_ATTN.
+      VLLM_ATTENTION_BACKEND: FLASHINFER
 
   embedding:
     platform: linux/arm64
     command:
-      - "--model=${EMBED_MODEL_ID}"
+      - "vllm"
+      - "serve"
+      - "${EMBED_MODEL_ID}"
       - "--served-model-name=qwen3-embedding"
       - "--task=embed"
       - "--host=0.0.0.0"
       - "--port=8000"
-      - "--gpu-memory-utilization=0.20"
+      # 4B-Embedding-Modell: 0.10 (~12 GB) reicht; 0.20 hatte ~24 GB reserviert.
+      - "--gpu-memory-utilization=0.10"
       - "--trust-remote-code"
 
   stt:
     platform: linux/arm64
+    # Qwen3-ASR über AEON-7/qwen3-asr-server (vLLM-Build für sm_121a).
+    # Spiegelt das Upstream-CMD, parametrisiert über .env. Port 8001 NICHT
+    # ändern (der eingebaute Image-Healthcheck prüft fest auf 8001).
+    command:
+      - "vllm"
+      - "serve"
+      - "${STT_MODEL_ID}"
+      - "--served-model-name=${STT_SERVED_NAME}"
+      - "--host=0.0.0.0"
+      - "--port=8001"
+      - "--gpu-memory-utilization=${STT_GPU_MEM_UTIL}"
+      - "--max-model-len=${STT_MAX_LEN}"
+      - "--max-num-seqs=${STT_MAX_SEQS}"
+      - "--trust-remote-code"
+    environment:
+      # Aus dem Upstream-Compose (Spark-erprobt): FP8-Marlin-Pfad erzwingen.
+      ENABLE_NVFP4_SM100: "0"
+      VLLM_TEST_FORCE_FP8_MARLIN: "1"
+      VLLM_USE_FLASHINFER_SAMPLER: "1"
   tts:
     platform: linux/arm64
+    # Qwen3-TTS CustomVoice (eingebaute Sprecher, DE/EN) über faster-qwen3-tts
+    # (CUDA-Graph statt Flash-Attention — sm_121-kompatibel).
+    # Server-Skript + Voices kommen aus dem /config-Mount (siehe base.yml).
+    command:
+      - "/bin/bash"
+      - "-c"
+      - >-
+        python3 /config/run_customvoice_server.py
+        --model /models/Qwen3-TTS-CustomVoice
+        --voices /config/customvoice_voices.json
+        --port 8000
+        --max-seq-len ${TTS_MAX_SEQ_LEN}
   ocr:
     platform: linux/arm64

@@ -25,14 +25,16 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
     volumes:
-      - ./gateway/litellm-config.yaml:/app/config.yaml:ro
+      # Relative Pfade löst Compose relativ zu compose/ auf -> ../
+      - ../gateway/litellm-config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     depends_on:
       llm:
         condition: service_healthy
     networks: [aistack]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:4000/health/liveliness || exit 1"]
+      # Das LiteLLM-Image hat kein curl/wget -> python3-Probe
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -83,15 +85,53 @@ services:
       retries: 20               # Ladezeit großer Modelle einkalkulieren
       start_period: 300s
 
+  # ---- LLM-fast (on-demand: `--profile fast` / `make up-fast`) -------------
+  llm-fast:
+    profiles: ["fast"]
+    image: ${VLLM_IMAGE}
+    container_name: ai-llm-fast
+    restart: unless-stopped
+    # command -> siehe compose/arm64.yml bzw. compose/x86.yml
+    ports:
+      - "${LLM_FAST_PORT}:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - ${HF_HOME}:/root/.cache/huggingface
+    ipc: host
+    networks: [aistack]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+
   # ---- Voice (on-demand: `--profile voice`) --------------------------------
   stt:
     profiles: ["voice"]
-    image: ${STT_IMAGE:-ai-stack/qwen3-asr:local}   # siehe services/stt/README.md
+    image: ${STT_IMAGE:-ghcr.io/aeon-7/qwen3-asr-server:latest}   # siehe services/stt/README.md
     container_name: ai-stt
+    restart: unless-stopped
+    # command -> Arch-Override. Container-Port ist 8001 (Upstream-Default),
+    # der Healthcheck kommt fertig aus dem Image (prüft 8001/v1/models).
+    ports:
+      - "${STT_PORT}:8001"
     environment:
       HF_TOKEN: ${HF_TOKEN}
-      MODEL_ID: ${STT_MODEL_ID}
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN}
       NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - ${HF_HOME}:/root/.cache/huggingface
     ipc: host
@@ -101,18 +141,31 @@ services:
 
   tts:
     profiles: ["voice"]
-    image: ${TTS_IMAGE:-ai-stack/qwen3-tts:local}   # siehe services/tts/README.md
+    image: ${TTS_IMAGE:-martinb78/faster-qwen3-tts-dgx-spark:latest}   # siehe services/tts/README.md
     container_name: ai-tts
+    restart: unless-stopped
+    # command -> Arch-Override (Server-Skripte kommen aus services/tts/upstream/config)
+    ports:
+      - "${TTS_PORT}:8000"
     environment:
       HF_TOKEN: ${HF_TOKEN}
-      MODEL_ID: ${TTS_MODEL_ID}
       NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
-      - ${HF_HOME}:/root/.cache/huggingface
+      - ${TTS_MODEL_DIR}:/models/Qwen3-TTS-CustomVoice:ro
+      - ../services/tts/upstream/config:/config:rw
+      # Eigene Voice-Definitionen (DE/EN) überlagern die Upstream-Datei:
+      - ../services/tts/customvoice_voices.json:/config/customvoice_voices.json:ro
     ipc: host
     networks: [aistack]
     deploy:
       resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
 
   # ---- RAG (on-demand: `--profile rag`) ------------------------------------
   embedding:
