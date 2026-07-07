@@ -11,6 +11,18 @@ model_list:
       api_base: http://llm:8000/v1
       api_key: dummy                   # vLLM ignoriert das, LiteLLM braucht einen Wert
 
+  # ---- Instant: derselbe 27B ohne Thinking (0 extra Speicher) ---------------
+  #  Für Titel, Zusammenfassungen, Query-Rewriting etc. Gemessen: Titel-Prompt
+  #  98s/960 Tokens (Thinking) vs. 1s/9 Tokens (ohne). LibreChat-titleModel.
+  - model_name: qwen3.6-27b-instant
+    litellm_params:
+      model: openai/qwen3.6-27b
+      api_base: http://llm:8000/v1
+      api_key: dummy
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+
   # ---- Fast: Qwen3.6-35B-A3B MoE (Profil `fast`) — Start via `make up-fast`.
   #      Solange der Dienst nicht läuft, schlagen nur Anfragen an DIESES Modell fehl.
   - model_name: qwen3.6-35b-fast
@@ -35,6 +47,10 @@ model_list:
       model: openai/qwen3-tts
       api_base: http://tts:8000/v1
       api_key: dummy
+      # Default MP3 statt WAV: Browser/LibreChat erwarten audio/mpeg
+      # (LibreChat sendet kein response_format und setzt den MIME-Type hart).
+      # Clients können weiterhin explizit response_format=wav anfordern.
+      response_format: mp3
   # STT: Start via `make up-stt`; Container-Port 8001 (Upstream-Default).
   # Provider hosted_vllm (nicht openai): der openai-Provider erzwingt bei
   # Transkription response_format=verbose_json, das vLLM nicht unterstützt.

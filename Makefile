@@ -2,11 +2,13 @@
 # COMPOSE_FILE kommt aus .env (merged base + Arch-Override).
 # '>' statt Tab als Recipe-Prefix (GNU Make >= 3.82).
 .RECIPEPREFIX = >
-.PHONY: help up up-fast up-tts up-stt up-voice up-rag up-full down logs ps pull restart pin-check
+.PHONY: help up up-ui up-fast stop-fast up-tts up-stt up-voice up-rag up-full down logs ps pull restart pin-check
 
 help:
-> @echo "up        Core-Services (LiteLLM, Qdrant, LLM) starten"
+> @echo "up        Core-Services (LiteLLM, Qdrant, LLM, LibreChat) starten"
+> @echo "up-ui     nur Chat-UI (LibreChat + MongoDB) — ohne GPU-Dienste"
 > @echo "up-fast   + LLM-fast (Qwen3.6-35B-A3B MoE) — bewusst NICHT im Standard-up"
+> @echo "stop-fast LLM-fast stoppen (GPU freigeben — noetig vor up-voice, s. HOW-TO)"
 > @echo "up-tts    + nur TTS (Qwen3-TTS CustomVoice)"
 > @echo "up-stt    + nur STT (Qwen3-ASR)"
 > @echo "up-voice  + Voice-Profil (STT + TTS)"
@@ -21,8 +23,14 @@ help:
 up:
 > docker compose up -d
 
+up-ui:
+> docker compose up -d librechat
+
 up-fast:
 > docker compose --profile fast up -d
+
+stop-fast:
+> docker compose --profile fast stop llm-fast
 
 up-tts:
 > docker compose --profile voice up -d tts

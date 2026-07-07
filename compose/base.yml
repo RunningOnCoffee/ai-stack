@@ -12,6 +12,10 @@ networks:
 
 volumes:
   qdrant-data:
+  mongo-data:
+  librechat-images:
+  librechat-uploads:
+  librechat-logs:
 
 services:
 
@@ -84,6 +88,78 @@ services:
       timeout: 10s
       retries: 20               # Ladezeit großer Modelle einkalkulieren
       start_period: 300s
+
+  # ---- Chat-UI: LibreChat + MongoDB (Core, CPU-only) ------------------------
+  #  Front-end-Entscheidung Session 4: LibreChat (MIT) statt Open WebUI
+  #  (Custom-Lizenz). Bewusst OHNE rag_api/pgvector/Meilisearch — RAG kommt
+  #  als eigener MCP-Retrieval-Server (Schritt 3). Konfig: services/librechat/.
+  librechat:
+    image: ${LIBRECHAT_IMAGE}
+    container_name: ai-librechat
+    restart: unless-stopped
+    ports:
+      - "${LIBRECHAT_PORT}:3080"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://mongodb:27017/LibreChat
+      # ${...} in librechat.yaml löst LibreChat gegen DIESE Container-Env auf:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      # Feste LibreChat-Var-Namen, Werte aus .env (Generierung: .env.example)
+      JWT_SECRET: ${LIBRECHAT_JWT_SECRET}
+      JWT_REFRESH_SECRET: ${LIBRECHAT_JWT_REFRESH_SECRET}
+      CREDS_KEY: ${LIBRECHAT_CREDS_KEY}
+      CREDS_IV: ${LIBRECHAT_CREDS_IV}
+      SEARCH: "false"              # kein Meilisearch im Stack
+      ALLOW_REGISTRATION: "true"   # vor LAN-Freigabe abwägen (HOW-TO.md)
+      APP_TITLE: ${LIBRECHAT_APP_TITLE:-AI-Stack}
+      NO_INDEX: "true"
+      # Serverseitiger Think-Filter der manuellen TTS-Route (patches/TTSService.js).
+      # "true" = Think-Block wird wieder mit vorgelesen (Filter aus).
+      TTS_READ_THINK: ${TTS_READ_THINK:-false}
+    volumes:
+      - ../services/librechat/librechat.yaml:/app/librechat.yaml:ro
+      # Patches (an v0.8.7 gebunden, beim Image-Update prüfen!): TTS soll den
+      # Think-Block nicht vorlesen — Server- UND Client-Pfad, siehe
+      # services/librechat/patches/ (README dort erklärt beide).
+      - ../services/librechat/patches/streamAudio.js:/app/api/server/services/Files/Audio/streamAudio.js:ro
+      - ../services/librechat/patches/TTSService.js:/app/api/server/services/Files/Audio/TTSService.js:ro
+      - ../services/librechat/patches/hooks.Bi3Cm4Qy.js:/app/client/dist/assets/hooks.Bi3Cm4Qy.js:ro
+      # sw.js: Revision-Bump für hooks-Eintrag, sonst serviert der Service
+      # Worker installierter Browser ewig das ALTE Bundle (revision:null)
+      - ../services/librechat/patches/sw.js:/app/client/dist/sw.js:ro
+      - librechat-images:/app/client/public/images
+      - librechat-uploads:/app/uploads
+      - librechat-logs:/app/api/logs
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      # bewusst KEINE Abhängigkeit auf gateway: UI startet sofort,
+      # Modelle sind konfiguriert (fetch: false) und greifen, sobald
+      # das Gateway da ist.
+    networks: [aistack]
+    healthcheck:
+      # Image ohne curl/wget -> node-Probe (analog Gateway/python3)
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3080/health', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: ${MONGO_IMAGE}
+    container_name: ai-mongodb
+    restart: unless-stopped
+    # KEIN Host-Port: nur im Compose-Netz erreichbar (läuft ohne Auth).
+    # Hinweis: MongoDB Server ist SSPL-lizenziert (interne Nutzung unkritisch).
+    command: mongod --noauth
+    volumes:
+      - mongo-data:/data/db
+    networks: [aistack]
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ping: 1})' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
   # ---- LLM-fast (on-demand: `--profile fast` / `make up-fast`) -------------
   llm-fast:

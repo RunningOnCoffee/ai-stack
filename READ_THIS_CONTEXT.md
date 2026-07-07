@@ -7,7 +7,7 @@
 
 ---
 
-## 0. ⚡ UPDATE 02.07.2026 — aktueller Stand (zuerst lesen!)
+## 0. ⚡ UPDATE 03.07.2026 — aktueller Stand (zuerst lesen!)
 
 ### Was läuft / was ist fertig
 
@@ -18,6 +18,113 @@
 | TTS Qwen3-TTS-0.6B CustomVoice (DE/EN) | ✅ eingerichtet | `make up-tts` | `:8002` |
 | STT Qwen3-ASR-0.6B (DE/EN, 30 Sprachen) | ✅ läuft, getestet (direkt + Gateway) | `make up-stt` | `:8003` |
 | Gateway (LiteLLM) + Qdrant | ✅ laufen, Erst-Test bestanden (alle 4 Routen) | `make up` | `:4000` / `:6333` |
+| **Chat-UI LibreChat + MongoDB (neu, Session 4)** | ✅ läuft, E2E-getestet (Chat via 27B, STT, TTS über Gateway) | `make up` / `make up-ui` | `:3080` |
+
+### Session 4 (03.07.): Front-end-Entscheidung + LibreChat integriert
+- **Entscheidung: LibreChat statt Open WebUI** (Recherche 03.07.): Open WebUI
+  seit v0.6.6 (04/2025) Custom-Lizenz mit Branding-Klausel (>50 User) + CLA,
+  nicht OSI; LibreChat pures MIT (seit 11/2025 ClickHouse, MIT-Zusage
+  öffentlich) → rebrand-/produktisierbar. Details: `services/librechat/README.md`.
+- **Bewusst ohne rag_api/pgvector/Meilisearch** (LibreChat-RAG ist naiv:
+  Fixed-Chunks, dense-only, kein Rerank; OCR-Default = Mistral-Cloud).
+  **RAG-Plan geändert:** eigener **MCP-Retrieval-Server** (streamable-http,
+  `mcpServers` in `librechat.yaml`, von LibreChat-Agents genutzt):
+  Query → Embedding (Gateway) → Qdrant (hybrid) → Reranker → Passagen+Quellen;
+  Ingestion (OCR → Chunking → Embedding → Qdrant) entkoppelt als eigene Pipeline.
+- Neu: `compose/base.yml` Services `librechat` + `mongodb` (Core, ohne Profil),
+  `services/librechat/` (librechat.yaml + README), `LIBRECHAT_*`/`MONGO_IMAGE`
+  in `.env`/`.env.example` (Secrets via openssl, siehe Vorlage), `make up-ui`.
+- Gotchas: LibreChat-Image ohne curl → node-Healthcheck; MongoDB ohne Auth,
+  dafür ohne Host-Port; `models.fetch: false`, damit qwen3-tts/-asr nicht im
+  Chat-Dropdown landen — neue Chat-Modelle in Gateway-Config UND
+  `librechat.yaml` pflegen; MongoDB ist SSPL (intern ok).
+- **E2E verifiziert (03.07., per API):** Chat → „Bereit" vom 27B (Antwort
+  liegt in `content`-Blöcken [think]+[text], Feld `text` bleibt leer);
+  STT (test-de.wav korrekt transkribiert) + TTS (Audio zurück) über
+  LibreChats Speech-Routen; Voices-Liste = librechat.yaml. Weitere Gotchas:
+  v0.8.7-Chat-API = `POST /api/agents/chat/:endpoint` (resumable streams:
+  POST antwortet sofort mit streamId, Generierung läuft serverseitig);
+  Browser-User-Agent nötig (uaParser lehnt Skript-UAs ab: „Illegal request");
+  Login-Rate-Limiter greift schnell. **Der erste registrierte User wird
+  Admin** — Test-User wurden gelöscht; Bruno ist registriert (ADMIN).
+- **Non-Thinking-Alias `qwen3.6-27b-instant`** (Gateway): derselbe 27B mit
+  `extra_body: chat_template_kwargs.enable_thinking=false` — gemessen
+  98s/960 Tokens (Thinking) vs. 1s/9 Tokens (ohne) beim Titel-Prompt.
+  LibreChat-`titleModel` nutzt ihn (`titleConvo: true`, E2E getestet:
+  Titel in Sekunden, 0 Timeouts). Kein separates Klein-LLM nötig; erneut
+  prüfen, falls parallele Hilfslast steigt (Budget erst für RAG nutzen).
+  Gotcha: Stock-Titel-Prompt titelt teils englisch (kosmetisch).
+- **TTS-im-Browser-Fix (03.07.):** LibreChat sendet kein `response_format`
+  und setzt hart `audio/mpeg` — unser TTS lieferte aber WAV → stumme
+  Wiedergabe. Fix: Gateway-Default `response_format: mp3` am qwen3-tts-Eintrag
+  (Clients können weiter explizit WAV anfordern; beides verifiziert).
+  Zweiter TTS-Fix: Vorlesen las den **Think-Block** mit (2 Upstream-Bugs,
+  auch auf main: skipReasoning-Default + geparster Text wurde nie benutzt)
+  → Patch `services/librechat/patches/streamAudio.js` als ro-Mount (an
+  v0.8.7 gebunden, beim Image-Update prüfen; README). Verifiziert:
+  Audio 139 KB → ~6 KB (nur die Antwort). Client-seitig 2 weitere
+  Upstream-Bugs (Details services/librechat/README.md): Klick-Vorlesen
+  parst den Text client-seitig inkl. Think *(Korrektur Session 5: die
+  damalige Deutung „Cache-Toggle wählt den Code-Pfad" war falsch — der
+  Klick geht immer über /tts/manual, s. u.)*; und stale CacheStorage
+  `tts-responses` überlebt Hard-Reload. Insgesamt 5 diagnostizierte
+  Upstream-Bugs (Issue/PR-Paket wert).
+- `interface.runCode: false` in librechat.yaml: der „Run Code"-Button
+  ruft LibreChats gehostete Cloud-API auf (api.librechat.ai, 401 ohne Key) —
+  nicht souverän; reaktivieren, falls die Code-API self-hosted verfügbar wird.
+
+### ✅ GELÖST (Session 5, 07.07.): TTS las Think vor — ZWEI Ursachen
+Der „TTS liest Think trotz sauberem Server-Pfad"-Mystery aus Session 4 ist
+aufgeklärt — es waren **zwei gestaffelte Ursachen**:
+1. **LibreChats Default-Engine für TTS UND STT ist `browser`** (Web Speech
+   API, rein client-seitig; Bundle: `engineTTS/engineSTT = 'browser'`) —
+   liest den Roh-Text inkl. Think, bricht bei langen Texten ab (Chrome-
+   speechSynthesis), **kein Server-Request** (so per Debug-Log + Inkognito-
+   Test bewiesen). Fix (einmalig pro Browser/Profil, localStorage):
+   Einstellungen → Sprache → Engine bei STT **und** TTS auf **„External"**.
+2. Auch mit „External": **Der Vorlese-Button geht IMMER über `/tts/manual`
+   mit client-seitig gebautem Text inkl. Think** — der TTS-Cache-Toggle
+   wechselt die Route NICHT (Session-4-Notiz „Cache AN = Streaming-Route"
+   war falsch; die gepatchte Streaming-Route nutzt nur `automaticPlayback`).
+   Bewiesen via MongoDB (Antwort 87 Zeichen ≈ 6s) vs. TTS-Log (60s Audio =
+   Think+Antwort). Fix: **2. Patch `patches/hooks.Bi3Cm4Qy.js`** (1 Byte:
+   Client-Parser `by()` = parseTextParts auf skipReasoning=true), ro-Mount
+   in base.yml — Details/Update-Caveats services/librechat/README.md.
+   Dazu **3. Patch `patches/sw.js`**: Workbox-Precache führt das Bundle
+   mit `revision:null` → installierte Service Worker refetchen es sonst
+   NIE (übersteht Hard-Reloads); Revision-Bump „think-patch-1" lässt alle
+   Clients das gepatchte Bundle beim nächsten Seitenaufruf ziehen.
+3. **Backstop (weil Browser-Cache-Zombies real sind): 4. Patch
+   `patches/TTSService.js`** — serverseitiger Think-Filter direkt in der
+   manuellen TTS-Route, cache-unabhängig: Exakt-Abgleich des Inputs gegen
+   die letzten User-Nachrichten in der DB (Think+Antwort → nur Antwort;
+   der geleakte Think hat KEINE `<think>`-Tags, reine Regex reicht nicht)
+   + Tag-Regex als Fallback. Toggle `TTS_READ_THINK=true` (.env) schaltet
+   ihn ab. E2E getestet (230-Zeichen-Tag-Input → 3,25 s Audio).
+- **Upstream-Bug #5:** Ein External-Default per `librechat.yaml`
+  (`speech.speechTab.textToSpeech.engineTTS`) ist in v0.8.7 unmöglich —
+  das yaml-Schema erlaubt nur `openai/azureOpenAI/elevenlabs/localai`, der
+  Client kennt aber nur `browser/external` und **resettet fremde Werte auf
+  `browser`** (hooks-Bundle: „Resetting invalid TTS engine"). Damit insgesamt
+  5 diagnostizierte Upstream-Bugs (services/librechat/README.md).
+- DEBUG_LOGGING/DEBUG_CONSOLE (temporäre Diagnose) wieder entfernt.
+- **Gotcha (live erlebt): llm-fast + Voice-Profil sprengen das GPU-Budget** —
+  `ai-stt` crasht dann beim Start mit CUDA out of memory in einer
+  Restart-Schleife (0.50 LLM + 0.30 llm-fast + TTS + 0.08 STT > ~0.85).
+  Fix: `make stop-fast` (neues Target) vor `make up-voice`; Warnung in
+  HOW-TO.md (Modell-Tabelle). Zwei Folge-Gotchas aus demselben Vorfall:
+  (a) **ai-tts bleibt bei OOM oben und meldet healthy** (Healthcheck prüft
+  nur den HTTP-Server, nicht das Modell) — Requests liefern dann
+  503 „Model not loaded"; nach OOM `docker compose --profile voice restart tts`
+  (Modell-Load + CUDA-Warmup abwarten, erst danach nimmt er Requests an).
+  (b) **Gateway hält stale Verbindungen zu neu gestarteten Backends**
+  (Container-IP wechselt beim Recreate/Restart) — Symptom:
+  `APIConnectionError` am Gateway, obwohl das Backend direkt erreichbar ist
+  und dort kein Request ankommt; Fix: `docker compose restart gateway`.
+  Danach Voice-E2E übers Gateway erneut verifiziert (TTS→WAV→STT-Roundtrip
+  + MP3-Default).
+- Noch offen (klein): STT-Browsertest — Mikrofonzugriff braucht
+  HTTPS/localhost-Tunnel (kommt mit Härtungs-Schritt 4, TLS/Reverse-Proxy).
 
 **Nutzung aus Anwendungssicht (API, Open WebUI, …): siehe `HOW-TO.md`.**
 
@@ -62,18 +169,20 @@
   TTS (gültige WAV) und ASR (DE/EN) über `:4000` verifiziert; Qdrant ready.
 - `HOW-TO.md` neu: Nutzung per API/SDK, Open WebUI-Anbindung (Chat/TTS/STT), Ports.
 
-### Nächster Schritt: Open WebUI als Teil des Stacks (dann RAG)
-- **Open WebUI als Compose-Service** einbauen (Wunsch: Teil DIESES Stacks,
-  reproduzierbar über das GitHub-Repo — kein manuelles Setup daneben).
-  Kein GPU-Bedarf; offizielles ARM64-Image `ghcr.io/open-webui/open-webui:main`
-  (vor Produktion per Digest pinnen). Persistentes Volume für User/Chats nötig
-  (`/app/backend/data`). Der fertige Env-Block (Gateway-Anbindung für Chat +
-  TTS + STT) liegt in `HOW-TO.md`; Zweck: alle Dienste bequem im Browser testen.
-- Danach **RAG (Schritt 3)**: `make up-rag` — Embedding (`--task embed`, command
-  liegt schon in arm64.yml, `EMBED_MODEL_ID=Qwen/Qwen3-Embedding-4B`, Util 0.10)
-  + Reranker (`--task score`) + OCR (zuerst Granite-Docling-258M, dann
-  PaddleOCR-VL — Abschnitt 8, Schritt 3).
-- Vor LAN-Nutzung: `LITELLM_MASTER_KEY` ändern (Platzhalter `sk-local-changeme`).
+### Nächster Schritt: RAG (Schritt 3) — eigener Stack + MCP-Anbindung
+- **RAG-Dienste:** `make up-rag` — Embedding (`--task embed`, command liegt
+  schon in arm64.yml, `EMBED_MODEL_ID=Qwen/Qwen3-Embedding-4B`, Util 0.10)
+  + Reranker (`--task score`, `RERANK_MODEL_ID=Qwen/Qwen3-Reranker-4B`)
+  + OCR (zuerst Granite-Docling-258M, dann PaddleOCR-VL — Abschnitt 8, Schritt 3).
+  `qwen3-embedding` in `gateway/litellm-config.yaml` einkommentieren.
+- **MCP-Retrieval-Server** (dünn, CPU): Tool `search_knowledge` → Embedding via
+  Gateway → Qdrant (hybrid) → Reranker → Passagen+Quellen; Anbindung über
+  `mcpServers` (streamable-http) in `services/librechat/librechat.yaml`,
+  Nutzung über einen geteilten LibreChat-Agent. Ingestion-Pipeline separat
+  (OCR → Chunking → Embedding → Qdrant), als On-demand-Job.
+- Danach gemeinsam optimieren (27B ggf. auf 0.35, Quoten-Summe ≤ 0.85).
+- Vor LAN-Nutzung: `LITELLM_MASTER_KEY` ändern (Platzhalter `sk-local-changeme`)
+  und LibreChat-Registrierung schließen (`ALLOW_REGISTRATION: "false"`).
 - Repo-Hygiene erledigt (Session 3): `.env.example` mit `.env` synchronisiert
   (inkl. 26.04-Image-Warnung, LLM-fast/TTS/STT-Blöcke) — beim Ändern der `.env`
   die Vorlage bitte mitpflegen. `.env` selbst war und ist NICHT getrackt.

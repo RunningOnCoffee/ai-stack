@@ -1,0 +1,62 @@
+# ============================================================================
+#  LibreChat-Konfiguration — komplette Anbindung ans Gateway (LiteLLM :4000).
+#  Wird read-only nach /app/librechat.yaml gemountet (compose/base.yml).
+#  ${VAR} löst LibreChat gegen die Container-Env auf.
+#  Referenz: https://www.librechat.ai/docs/configuration/librechat_yaml
+# ============================================================================
+
+version: 1.3.13
+cache: true
+
+interface:
+  customWelcome: 'AI-Stack — lokaler, souveräner KI-Stack auf DGX Spark'
+  # "Run Code" ruft LibreChats GEHOSTETE Code-API (api.librechat.ai) auf —
+  # nicht souverän, ohne Key eh nur 401. Wieder aktivierbar, sobald die
+  # Code-API self-hosted verfügbar ist (Open-Sourcing war für Q1/26 angekündigt).
+  runCode: false
+
+endpoints:
+  custom:
+    - name: 'AI-Stack'
+      apiKey: '${LITELLM_MASTER_KEY}'
+      baseURL: 'http://gateway:4000/v1'
+      models:
+        default:
+          - 'qwen3.6-27b'
+          # llm-fast ist on-demand (make up-fast); solange aus, schlagen nur
+          # Anfragen an dieses Modell fehl:
+          - 'qwen3.6-35b-fast'
+        # bewusst false: /v1/models listet auch qwen3-tts/qwen3-asr,
+        # die im Chat-Dropdown nichts verloren haben
+        fetch: false
+      # Titel über den Non-Thinking-Alias (Gateway: extra_body
+      # enable_thinking=false auf demselben 27B) — mit Thinking riss die
+      # Titel-Generierung LibreChats Timeout (98s vs. 1s gemessen).
+      titleConvo: true
+      titleModel: 'qwen3.6-27b-instant'
+      modelDisplayLabel: 'AI-Stack'
+
+# Sprachdialog komplett lokal: STT + TTS laufen über das Gateway
+# (Voice-Profil muss laufen: make up-voice)
+speech:
+  stt:
+    openai:
+      url: 'http://gateway:4000/v1/audio/transcriptions'
+      apiKey: '${LITELLM_MASTER_KEY}'
+      model: 'qwen3-asr'
+  tts:
+    openai:
+      url: 'http://gateway:4000/v1/audio/speech'
+      apiKey: '${LITELLM_MASTER_KEY}'
+      model: 'qwen3-tts'
+      # Voices aus services/tts/customvoice_voices.json ("-de"/"-en" = feste
+      # Sprache, ohne Suffix = Auto-Erkennung)
+      voices:
+        - 'serena-de'
+        - 'serena-en'
+        - 'ryan-de'
+        - 'ryan-en'
+        - 'serena'
+        - 'ryan'
+        - 'aiden'
+        - 'vivian'
