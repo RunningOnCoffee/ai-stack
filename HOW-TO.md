@@ -97,13 +97,14 @@ laufen über das Gateway. Details/Entscheidung: `services/librechat/README.md`.
   „AI-Stack", Modell `qwen3.6-27b`.
 - **Sprache:** Einstellungen → Sprache → **Engine bei STT und TTS auf
   „External" stellen** (einmalig pro Browser/Profil; der Default „Browser"
-  nutzt die Web-Speech-API des Browsers statt unseres Stacks — liest dann
-  u. a. den Think-Block mit vor). Liest auch „External" einen „Thinking"-Block
-  mit vor: einmal Hard-Reload (Strg+Shift+R) — die Anti-Think-Patches sind an
-  die Image-Version gebunden (`services/librechat/README.md`). Voice z. B. `serena-de`
-  (alle: `services/tts/customvoice_voices.json`); die Modelle `qwen3-asr`/
-  `qwen3-tts` sind serverseitig vorkonfiguriert (`librechat.yaml`).
+  nutzt die Web-Speech-API des Browsers statt unseres Stacks). Voice z. B.
+  `serena-de` (alle: `services/tts/customvoice_voices.json`); die Modelle
+  `qwen3-asr`/`qwen3-tts` sind serverseitig vorkonfiguriert (`librechat.yaml`).
   Sprechen → Text → LLM → Antwort vorgelesen, komplett lokal.
+  **Bekanntes Verhalten:** Das Vorlesen liest bei Reasoning-Modellen derzeit
+  den Think-Block mit vor (Upstream-Bugs; Analyse und entfernter Patch-Satz:
+  `services/librechat/README.md` bzw. Commit `7dcd90c`. Fix ist später als
+  eigener Filter-Service geplant).
 - **Neue Chat-Modelle** müssen in `gateway/litellm-config.yaml` **und**
   `services/librechat/librechat.yaml` (`models.default`) eingetragen werden
   (`fetch: false`, damit TTS/ASR nicht im Chat-Dropdown landen).

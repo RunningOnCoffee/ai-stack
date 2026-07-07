@@ -114,20 +114,8 @@ services:
       ALLOW_REGISTRATION: "true"   # vor LAN-Freigabe abwägen (HOW-TO.md)
       APP_TITLE: ${LIBRECHAT_APP_TITLE:-AI-Stack}
       NO_INDEX: "true"
-      # Serverseitiger Think-Filter der manuellen TTS-Route (patches/TTSService.js).
-      # "true" = Think-Block wird wieder mit vorgelesen (Filter aus).
-      TTS_READ_THINK: ${TTS_READ_THINK:-false}
     volumes:
       - ../services/librechat/librechat.yaml:/app/librechat.yaml:ro
-      # Patches (an v0.8.7 gebunden, beim Image-Update prüfen!): TTS soll den
-      # Think-Block nicht vorlesen — Server- UND Client-Pfad, siehe
-      # services/librechat/patches/ (README dort erklärt beide).
-      - ../services/librechat/patches/streamAudio.js:/app/api/server/services/Files/Audio/streamAudio.js:ro
-      - ../services/librechat/patches/TTSService.js:/app/api/server/services/Files/Audio/TTSService.js:ro
-      - ../services/librechat/patches/hooks.Bi3Cm4Qy.js:/app/client/dist/assets/hooks.Bi3Cm4Qy.js:ro
-      # sw.js: Revision-Bump für hooks-Eintrag, sonst serviert der Service
-      # Worker installierter Browser ewig das ALTE Bundle (revision:null)
-      - ../services/librechat/patches/sw.js:/app/client/dist/sw.js:ro
       - librechat-images:/app/client/public/images
       - librechat-uploads:/app/uploads
       - librechat-logs:/app/api/logs

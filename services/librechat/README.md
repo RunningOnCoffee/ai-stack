@@ -39,69 +39,39 @@ MCP-Retrieval-Server (Qdrant + Embedding + Reranker + lokales OCR) und wird
 3. Modell „AI-Stack → qwen3.6-27b" wählen, chatten
 4. Sprachdialog: Einstellungen → Sprache — **Engine bei STT und TTS auf
    „External" stellen** (einmalig pro Browser/Profil; Default „Browser" =
-   Web-Speech-API des Browsers, nicht unser Stack — siehe Patches-Abschnitt),
+   Web-Speech-API des Browsers, nicht unser Stack — siehe unten),
    Voice aus `services/tts/customvoice_voices.json` (z. B. `serena-de`);
    die Modelle `qwen3-asr`/`qwen3-tts` kommen aus `librechat.yaml`
 
-## Patches (an die Image-Version v0.8.7 gebunden!)
+## Bekanntes Verhalten: TTS liest den Think-Block mit vor
 
-Zwei ro-Mounts (compose/base.yml) legen sich über Original-Dateien im Image,
-damit TTS **nicht den Reasoning-/Think-Block vorliest**. Hintergrund: Es gibt
-zwei getrennte TTS-Pfade, beide hatten denselben Bug (skipReasoning-Default
-fälschlich `false`):
+**Entscheidung Session 5 (07.07.2026):** LibreChats Vorlese-Funktion liest
+bei Reasoning-Modellen den Think-Block mit vor. Die Ursachen sind komplett
+diagnostiziert (5 Upstream-Bugs, Details unten), ein funktionierender
+Patch-Satz wurde gebaut und serverseitig E2E-verifiziert — dann aber
+**bewusst wieder entfernt** (4 an v0.8.7 gebundene Dateikopien = zu viel
+Wartungslast; Browser-Cache-Schichten machten das Ausrollen zäh).
+**Der komplette Patch-Satz inkl. Doku liegt in Commit `7dcd90c`**
+(`services/librechat/patches/`), falls er reaktiviert werden soll.
+Geplanter sauberer Weg: dünner TTS-Proxy-Service zwischen LibreChat und
+Gateway, der den Think-Anteil filtert — unabhängig von LibreChat-Interna.
 
-1. **`patches/streamAudio.js`** (Server) — Streaming-Route
-   `POST /api/files/speech/tts`, genutzt NUR von der automatischen
-   Wiedergabe (`automaticPlayback`, Vorlesen während der Generierung).
-   Zwei Fixes: (a) `parseTextParts(..., true)` (= skipReasoning);
-   (b) der geparste Text wird jetzt wirklich verwendet — upstream wurde er
-   nur gecacht und danach wieder das rohe `message.text` gelesen.
-2. **`patches/hooks.Bi3Cm4Qy.js`** (Client-Bundle, minifiziert) — der
-   **Klick auf den Vorlese-Button** geht IMMER über `POST /tts/manual`
-   mit **client-seitig** gebautem Text (Session-5-Erkenntnis: der
-   TTS-Cache-Toggle wechselt NICHT die Route, er steuert nur, ob die
-   CacheStorage `tts-responses` gelesen/befüllt wird — die Session-4-Notiz
-   „Cache AN = Streaming-Route" war falsch). Patch = 1 Byte: im Text-Parser
-   `function by(e,t=!1)` → `t=!0` (skipReasoning-Default true; `by` =
-   minifiziertes `parseTextParts`). Nebeneffekt: Cache-Keys sind der
-   Text selbst → alte Think-Audios matchen nach dem Patch nicht mehr.
-3. **`patches/sw.js`** — nötig, damit Patch 2 Browser mit bereits
-   installiertem Service Worker überhaupt erreicht: das Workbox-Precache-
-   Manifest führt `hooks.Bi3Cm4Qy.js` mit `revision:null`, d. h. der SW
-   refetcht die Datei bei gleichem Namen NIE (übersteht auch Hard-Reloads).
-   Patch = Revision-Bump auf `"think-patch-1"` für genau diesen Eintrag →
-   der SW lädt das Bundle beim nächsten normalen Seitenaufruf neu.
-   (Bei künftigen Patch-Änderungen am Bundle: Revision erneut bumpen.)
-4. **`patches/TTSService.js`** (Server) — **der eigentliche Backstop**,
-   wirkt unabhängig von allen Browser-/SW-/HTTP-Cache-Schichten: die
-   manuelle Route `/tts/manual` filtert den Client-Input serverseitig.
-   (a) Exakt-Abgleich gegen die letzten 25 Assistant-Nachrichten des Users:
-   Input == `parseTextParts(content, false)` (Think+Antwort, wie ihn
-   Alt-Clients mit gecachtem Bundle senden — OHNE `<think>`-Tags!) →
-   ersetzt durch `parseTextParts(content, true)` (nur die Antwort);
-   deterministisch, keine False Positives. (b) Fallback: rohe
-   `<think>`/`<thinking>`-Tag-Blöcke werden per Regex entfernt.
-   E2E getestet (Tag-Variante: 230-Zeichen-Input → 3,25 s Audio = nur der
-   Antwortsatz). **Toggle:** `TTS_READ_THINK=true` in der `.env` schaltet
-   den Filter ab (Default: aktiv).
-
-Upstream-Bugs (Stand 07/2026 auch auf `main`; Issue/PR-Paket wert:
-danny-avila/LibreChat): die zwei streamAudio-Bugs (oben 1a/1b), der
-Klick-Parser ohne skipReasoning (oben 2), dazu ungepatcht: alte
-CacheStorage-Einträge überleben Hard-Reload (bei Audio-Altlasten einmalig
-DevTools → Application → Cache Storage → `tts-responses` löschen) und
-**Default-Engine `browser` für TTS UND STT** (Web Speech API, rein
-client-seitig: liest Roh-Text inkl. Think, bricht bei langen Texten ab,
-kein Server-Request — Ursache des Session-4-Mysterys „Think trotz Patch").
-Jeder User muss einmalig Engine „External" wählen (Erststart Schritt 4);
-ein External-Default per `speech.speechTab` in librechat.yaml ist in
-v0.8.7 **unmöglich**: Schema-Enum (`openai/azureOpenAI/…`) passt nicht zu
-den Client-Werten (`browser/external`), der Client resettet unbekannte
-Werte auf `browser` („Resetting invalid TTS engine").
-**Beim Image-Update:** Dateien neu aus dem Image kopieren, Patches neu
-anwenden (oder prüfen, ob upstream gefixt → Mounts entfernen). Der
-Bundle-Dateiname (`hooks.Bi3Cm4Qy.js`) ändert sich mit jedem Build —
-dann läuft der Mount ins Leere und der Bug ist zurück.
+Diagnostizierte Upstream-Bugs (Stand 07/2026 auch auf `main`; Issue/PR-Paket
+wert: danny-avila/LibreChat):
+1. `streamAudio.js` (Server, Streaming-Route der automatischen Wiedergabe):
+   skipReasoning-Default falsch UND der geparste Text wird nicht verwendet.
+2. Klick-Vorlesen geht IMMER über `POST /tts/manual` mit **client-seitig**
+   gebautem Text inkl. Think (`parseTextParts`-Default; der TTS-Cache-Toggle
+   wechselt NICHT die Route, er steuert nur die CacheStorage).
+3. Alte CacheStorage-Einträge (`tts-responses`) überleben Hard-Reloads
+   (bei Audio-Altlasten: DevTools → Application → Cache Storage löschen).
+4. **Default-Engine `browser` für TTS UND STT** (Web Speech API, rein
+   client-seitig: liest Roh-Text inkl. Think, bricht bei langen Texten ab,
+   kein Server-Request). Jeder User muss einmalig „External" wählen.
+5. Ein External-Default per `speech.speechTab` in librechat.yaml ist in
+   v0.8.7 unmöglich: Schema-Enum (`openai/azureOpenAI/…`) passt nicht zu
+   den Client-Werten (`browser/external`), der Client resettet unbekannte
+   Werte auf `browser` („Resetting invalid TTS engine").
 
 ## Betrieb
 

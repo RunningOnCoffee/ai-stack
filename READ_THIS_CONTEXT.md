@@ -73,34 +73,34 @@
   ruft LibreChats gehostete Cloud-API auf (api.librechat.ai, 401 ohne Key) —
   nicht souverän; reaktivieren, falls die Code-API self-hosted verfügbar wird.
 
-### ✅ GELÖST (Session 5, 07.07.): TTS las Think vor — ZWEI Ursachen
-Der „TTS liest Think trotz sauberem Server-Pfad"-Mystery aus Session 4 ist
-aufgeklärt — es waren **zwei gestaffelte Ursachen**:
+### 📌 Session 5 (07.07.): Think-TTS aufgeklärt; Patches wieder entfernt — Fix später als eigener Service
+
+**Analyse abgeschlossen** — der „TTS liest Think trotz sauberem Server-Pfad"-
+Mystery aus Session 4 hatte **zwei gestaffelte Ursachen**:
 1. **LibreChats Default-Engine für TTS UND STT ist `browser`** (Web Speech
    API, rein client-seitig; Bundle: `engineTTS/engineSTT = 'browser'`) —
    liest den Roh-Text inkl. Think, bricht bei langen Texten ab (Chrome-
-   speechSynthesis), **kein Server-Request** (so per Debug-Log + Inkognito-
-   Test bewiesen). Fix (einmalig pro Browser/Profil, localStorage):
+   speechSynthesis), **kein Server-Request** (per Debug-Log + Inkognito-
+   Test bewiesen). Abhilfe (einmalig pro Browser/Profil, localStorage):
    Einstellungen → Sprache → Engine bei STT **und** TTS auf **„External"**.
 2. Auch mit „External": **Der Vorlese-Button geht IMMER über `/tts/manual`
    mit client-seitig gebautem Text inkl. Think** — der TTS-Cache-Toggle
    wechselt die Route NICHT (Session-4-Notiz „Cache AN = Streaming-Route"
-   war falsch; die gepatchte Streaming-Route nutzt nur `automaticPlayback`).
-   Bewiesen via MongoDB (Antwort 87 Zeichen ≈ 6s) vs. TTS-Log (60s Audio =
-   Think+Antwort). Fix: **2. Patch `patches/hooks.Bi3Cm4Qy.js`** (1 Byte:
-   Client-Parser `by()` = parseTextParts auf skipReasoning=true), ro-Mount
-   in base.yml — Details/Update-Caveats services/librechat/README.md.
-   Dazu **3. Patch `patches/sw.js`**: Workbox-Precache führt das Bundle
-   mit `revision:null` → installierte Service Worker refetchen es sonst
-   NIE (übersteht Hard-Reloads); Revision-Bump „think-patch-1" lässt alle
-   Clients das gepatchte Bundle beim nächsten Seitenaufruf ziehen.
-3. **Backstop (weil Browser-Cache-Zombies real sind): 4. Patch
-   `patches/TTSService.js`** — serverseitiger Think-Filter direkt in der
-   manuellen TTS-Route, cache-unabhängig: Exakt-Abgleich des Inputs gegen
-   die letzten User-Nachrichten in der DB (Think+Antwort → nur Antwort;
-   der geleakte Think hat KEINE `<think>`-Tags, reine Regex reicht nicht)
-   + Tag-Regex als Fallback. Toggle `TTS_READ_THINK=true` (.env) schaltet
-   ihn ab. E2E getestet (230-Zeichen-Tag-Input → 3,25 s Audio).
+   war falsch; die Streaming-Route nutzt nur `automaticPlayback`).
+   Bewiesen via MongoDB (Antwort 87 Zeichen ≈ 6s) vs. TTS-Log (60s Audio).
+
+**ENTSCHEIDUNG: Der gebaute 4-Patch-Satz wurde wieder entfernt** (Bruno,
+Sessionende 5). Er war serverseitig E2E-verifiziert (Filter-Tests: nur der
+Antwortsatz wurde synthetisiert), aber: 4 an v0.8.7 gebundene Dateikopien
+(inkl. 1,1-MB-Client-Bundle) = zu viel Wartungslast, und Browser-Schichten
+(Service-Worker-Precache mit `revision:null`, CacheStorage `tts-responses`,
+HTTP-Cache) machten das Ausrollen auf bereits benutzte Browser extrem zäh.
+**Kompletter Patch-Satz + Doku: Commit `7dcd90c`** (services/librechat/
+patches/: streamAudio.js, TTSService.js mit DB-Abgleich-Filter+Toggle,
+hooks-Bundle, sw.js). **Geplanter sauberer Weg:** dünner TTS-Filter-Proxy
+zwischen LibreChat und Gateway (eigener Service, LibreChat-unabhängig).
+Bis dahin: **Vorlesen liest den Think-Block mit vor** (bekanntes Verhalten,
+HOW-TO.md).
 - **Upstream-Bug #5:** Ein External-Default per `librechat.yaml`
   (`speech.speechTab.textToSpeech.engineTTS`) ist in v0.8.7 unmöglich —
   das yaml-Schema erlaubt nur `openai/azureOpenAI/elevenlabs/localai`, der
